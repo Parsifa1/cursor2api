@@ -130,3 +130,113 @@ export function fixToolCallArguments(
     args = repairExactMatchToolArguments(toolName, args);
     return args;
 }
+
+/**
+ * 规范化 hashline edit 工具的 edits 数组参数
+ * 处理 omp Edit 工具的各种字段别名：tag→pos, text→lines, insert_after→append 等
+ */
+function normalizeHashlineEditArgs(args: Record<string, unknown>): Record<string, unknown> {
+    const editsValue = args.edits;
+    if (!Array.isArray(editsValue)) return args;
+
+    const normalizedEdits = editsValue.map((raw) => {
+        if (!raw || typeof raw !== 'object') return raw;
+        const edit = { ...(raw as Record<string, unknown>) };
+
+        // tag 是 pos 的别名
+        if (!('pos' in edit) && typeof edit.tag === 'string') {
+            edit.pos = edit.tag;
+        }
+
+        // text/content → lines
+        if (!('lines' in edit)) {
+            if (Array.isArray(edit.text)) {
+                edit.lines = edit.text;
+            } else if (typeof edit.text === 'string') {
+                edit.lines = [edit.text];
+            } else if (typeof edit.content === 'string') {
+                edit.lines = [edit.content];
+            }
+        }
+
+        // op 别名规范化
+        if (typeof edit.op === 'string') {
+            const op = edit.op.toLowerCase();
+            if (op === 'insert_after') edit.op = 'append';
+            else if (op === 'insert_before') edit.op = 'prepend';
+        }
+
+        return edit;
+    });
+
+    return { ...args, edits: normalizedEdits };
+}
+
+/**
+ * 规范化工具调用名称和参数
+ * 处理 omp 工具的别名（hashline→Edit, job→await/cancel_job 等）
+ */
+export function normalizeToolCall(toolName: string, args: Record<string, unknown>): { name: string; args: Record<string, unknown> } {
+    let normalizedName = (toolName || '').trim();
+    let normalizedArgs = { ...(args || {}) };
+    const lower = normalizedName.toLowerCase();
+
+    if (['hashline', 'hashline_edit', 'hashline-edit', 'hashlineedit'].includes(lower)) {
+        normalizedName = 'Edit';
+        normalizedArgs = normalizeHashlineEditArgs(normalizedArgs);
+    } else if (lower === 'job') {
+        const action = typeof normalizedArgs.action === 'string' ? normalizedArgs.action.toLowerCase() : 'await';
+        const jobId = typeof normalizedArgs.job_id === 'string'
+            ? normalizedArgs.job_id
+            : typeof normalizedArgs.id === 'string'
+                ? normalizedArgs.id
+                : typeof normalizedArgs.job === 'string'
+                    ? normalizedArgs.job
+                    : undefined;
+
+        if (action === 'cancel' || action === 'kill' || action === 'stop') {
+            normalizedName = 'cancel_job';
+            if (jobId) normalizedArgs = { job_id: jobId };
+        } else {
+            normalizedName = 'await';
+            if (jobId) normalizedArgs = { jobs: [jobId] };
+        }
+    } else if (lower === 'canceljob') {
+        normalizedName = 'cancel_job';
+    }
+
+    // await: 确保 jobs 是数组
+    if (normalizedName.toLowerCase() === 'await') {
+        const jobId = typeof normalizedArgs.job_id === 'string'
+            ? normalizedArgs.job_id
+            : typeof normalizedArgs.id === 'string'
+                ? normalizedArgs.id
+                : typeof normalizedArgs.job === 'string'
+                    ? normalizedArgs.job
+                    : undefined;
+        if (!Array.isArray(normalizedArgs.jobs) && jobId) {
+            normalizedArgs = { ...normalizedArgs, jobs: [jobId] };
+        }
+    }
+
+    // cancel_job: 确保 job_id 是字符串
+    if (normalizedName.toLowerCase() === 'cancel_job' && typeof normalizedArgs.job_id !== 'string') {
+        const jobId = typeof normalizedArgs.id === 'string'
+            ? normalizedArgs.id
+            : typeof normalizedArgs.job === 'string'
+                ? normalizedArgs.job
+                : Array.isArray(normalizedArgs.jobs) && typeof normalizedArgs.jobs[0] === 'string'
+                    ? normalizedArgs.jobs[0]
+                    : undefined;
+        if (jobId) {
+            normalizedArgs = { ...normalizedArgs, job_id: jobId };
+        }
+    }
+
+    // edit 系列统一走参数规范化（name 已被规范化为 'Edit'，此处兜底原始别名）
+    if (['edit', 'hashline', 'hashline_edit', 'hashline-edit', 'hashlineedit'].includes(normalizedName.toLowerCase())) {
+        normalizedArgs = normalizeHashlineEditArgs(normalizedArgs);
+    }
+
+    return { name: normalizedName, args: normalizedArgs };
+}

@@ -24,7 +24,8 @@ import type {
 } from './types.js';
 import { getConfig } from './config.js';
 import { applyVisionInterceptor } from './vision.js';
-import { fixToolCallArguments } from './tool-fixer.js';
+import { fixToolCallArguments, normalizeToolCall } from './tool-fixer.js';
+import { alignToolNameToAvailable } from './tool-alias.js';
 import { getVisionProxyFetchOptions } from './proxy-agent.js';
 
 // ==================== 工具指令构建 ====================
@@ -150,7 +151,8 @@ function buildToolInstructions(
         forceConstraint = `
 **MANDATORY**: Your response MUST include at least one \`\`\`json action block. Responding with plain text only is NOT acceptable when tool_choice is "any". If you are unsure what to do, use the most appropriate available action.`;
     } else if (toolChoice?.type === 'tool') {
-        const requiredName = (toolChoice as { type: 'tool'; name: string }).name;
+        const rawRequiredName = (toolChoice as { type: 'tool'; name: string }).name;
+        const requiredName = alignToolNameToAvailable(rawRequiredName, tools.map((t) => t.name));
         forceConstraint = `
 **MANDATORY**: Your response MUST call the "${requiredName}" action using a \`\`\`json action block. No other response format is acceptable.`;
     }
@@ -909,7 +911,8 @@ export function parseToolCalls(responseText: string): {
                     const name = parsed.tool || parsed.name;
                     let args = parsed.parameters || parsed.arguments || parsed.input || {};
                     args = fixToolCallArguments(name, args);
-                    toolCalls.push({ name, arguments: args });
+                    const normalized = normalizeToolCall(name, args);
+                    toolCalls.push({ name: normalized.name, arguments: normalized.args });
                     blocksToRemove.push({ start: blockStart, end: closingPos + 3 });
                 }
             } catch (e) {
@@ -930,7 +933,8 @@ export function parseToolCalls(responseText: string): {
                         const name = parsed.tool || parsed.name;
                         let args = parsed.parameters || parsed.arguments || parsed.input || {};
                         args = fixToolCallArguments(name, args);
-                        toolCalls.push({ name, arguments: args });
+                        const normalized = normalizeToolCall(name, args);
+                        toolCalls.push({ name: normalized.name, arguments: normalized.args });
                         blocksToRemove.push({ start: blockStart, end: responseText.length });
                     }
                 } catch {
