@@ -39,6 +39,7 @@ app.use((_req, res, next) => {
 
 // ★ 静态文件路由（无需鉴权，CSS/JS 等）
 app.use('/public', express.static('public'));
+app.get('/favicon.ico', (_req, res) => res.sendFile('favicon.ico', { root: 'public' }));
 
 // ★ 日志查看器鉴权中间件：配置了 authTokens 时需要验证
 const logViewerAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
